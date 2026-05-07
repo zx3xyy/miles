@@ -76,7 +76,9 @@ def _thinking_metrics(thinking_lengths, visible_lengths, has_end):
     metrics = {}
     for prefix, values in (
         ("rollout/thinking", thinking_lengths),
+        ("rollout/target_thinking", thinking_lengths),
         ("rollout/visible_after_think", visible_lengths),
+        ("rollout/target_visible_after_think", visible_lengths),
     ):
         for name, value in _summarize(values).items():
             metrics[f"{prefix}/{name}"] = value
@@ -84,6 +86,8 @@ def _thinking_metrics(thinking_lengths, visible_lengths, has_end):
     if has_end:
         metrics["rollout/thinking_end_ratio"] = statistics.fmean(1.0 if x else 0.0 for x in has_end)
         metrics["rollout/thinking_missing_end_ratio"] = 1.0 - metrics["rollout/thinking_end_ratio"]
+        metrics["rollout/target_thinking_end_ratio"] = metrics["rollout/thinking_end_ratio"]
+        metrics["rollout/target_thinking_missing_end_ratio"] = metrics["rollout/thinking_missing_end_ratio"]
     if thinking_lengths and visible_lengths:
         ratios = [
             thinking / (thinking + visible)
@@ -212,6 +216,8 @@ def generate_rollout(args, rollout_id, data_buffer, evaluation=False):
     for i, sample in enumerate(samples):
         (sample,) = sample
         messages = sample.prompt
+        if sample.metadata is None:
+            sample.metadata = {}
         tools = sample.metadata.get("tools", None)
 
         token_ids, loss_mask = MASK_GENERATOR.get_loss_mask(messages, tools=tools)
@@ -229,17 +235,28 @@ def generate_rollout(args, rollout_id, data_buffer, evaluation=False):
         thinking_lengths.append(thinking_tokens)
         visible_lengths.append(visible_tokens)
         has_end.append(found_end)
-        if sample.metadata is None:
-            sample.metadata = {}
         sample.metadata["sft_target_thinking_tokens"] = thinking_tokens
         sample.metadata["sft_target_visible_after_think_tokens"] = visible_tokens
         sample.metadata["sft_target_has_think_end"] = found_end
 
         if i == 0 and not SAMPLE_PRINTED:
+            preview_tokens = token_ids[-min(response_length, 64) :] if response_length > 0 else []
+            target_tail = TOKENIZER.decode(preview_tokens)[-500:] if preview_tokens else ""
+            prompt_chars = sum(len(message.get("content", "")) for message in messages)
             logger.info(
                 "sft_rollout::generate_rollout example data: "
-                f"{sample=} (raw){messages=} {response_length=} "
-                f"{thinking_tokens=} {visible_tokens=} {found_end=}"
+                "sample_id=%s num_messages=%d prompt_chars=%d total_tokens=%d "
+                "response_length=%d thinking_tokens=%d visible_tokens=%d "
+                "found_end=%s target_tail=%r",
+                getattr(sample, "id", None),
+                len(messages),
+                prompt_chars,
+                len(token_ids),
+                response_length,
+                thinking_tokens,
+                visible_tokens,
+                found_end,
+                target_tail,
             )
             SAMPLE_PRINTED = True
         if i == 0:

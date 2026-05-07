@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+import os
 import re
 import subprocess
 from contextlib import contextmanager
@@ -158,6 +159,8 @@ def exec_command_all_ray_node(
 
 
 def get_current_node_ip():
+    if env_overwrite_local_ip := os.getenv("MILES_HOST_IP"):
+        return env_overwrite_local_ip
     address = ray._private.services.get_node_ip_address()
     # strip ipv6 address
     address = address.strip("[]")

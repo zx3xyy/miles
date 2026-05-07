@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from miles.backends.training_utils.parallel import get_parallel_state
 from miles.utils.distributed_utils import init_process_group
+from miles.utils.misc import get_current_node_ip
 
 from .mixin import DistBucketedWeightUpdateMixin
 
@@ -114,7 +115,7 @@ def connect_rollout_engines_from_distributed(
     """
     if engine_gpu_counts is None:
         engine_gpu_counts = [args.rollout_num_gpus_per_engine] * len(rollout_engines)
-    master_address = ray._private.services.get_node_ip_address()
+    master_address = get_current_node_ip()
     with socket.socket() as sock:
         sock.bind(("", 0))
         master_port = sock.getsockname()[1]
@@ -136,13 +137,19 @@ def connect_rollout_engines_from_distributed(
         rank_cursor += engine_gpu_counts[i]
     model_update_groups = init_process_group(
         backend="nccl",
-        init_method=f"tcp://{master_address}:{master_port}",
+        init_method=f"tcp://{_format_tcp_host(master_address)}:{master_port}",
         world_size=world_size,
         rank=0,
         group_name=group_name,
     )
     ray.get(refs)
     return model_update_groups
+
+
+def _format_tcp_host(address: str) -> str:
+    if ":" in address and not address.startswith("["):
+        return f"[{address}]"
+    return address
 
 
 def disconnect_rollout_engines_from_distributed(args, group_name, model_update_groups, rollout_engines):
